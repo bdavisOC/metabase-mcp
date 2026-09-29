@@ -170,22 +170,35 @@ async def list_databases(ctx: Context) -> dict[str, Any]:
 
 
 @mcp.tool
-async def list_tables(database_id: int, ctx: Context) -> str:
+async def list_tables(database_id: int, ctx: Context, name_filter: str | None = None) -> str:
     """
     List all tables in a specific database.
 
     Args:
         database_id: The ID of the database to query.
+        name_filter: Optional case-insensitive substring to match against table
+            name or display name (useful for databases with thousands of tables).
 
     Returns:
         Formatted markdown table showing table details.
     """
     try:
         await ctx.info(f"Fetching tables for database {database_id}")
-        result = await metabase_client.request("GET", f"/database/{database_id}/metadata")
+        # include=tables returns tables without their fields; /metadata also returns
+        # every field and can time out on databases with thousands of tables
+        result = await metabase_client.request(
+            "GET", f"/database/{database_id}", params={"include": "tables"}
+        )
 
         # Extract and format tables
         tables = result.get("tables", [])
+        if name_filter:
+            needle = name_filter.lower()
+            tables = [
+                t for t in tables
+                if needle in (t.get("name") or "").lower()
+                or needle in (t.get("display_name") or "").lower()
+            ]
         await ctx.debug(f"Found {len(tables)} tables in database {database_id}")
 
         formatted_tables = [
