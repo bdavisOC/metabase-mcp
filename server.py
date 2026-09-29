@@ -192,6 +192,42 @@ def build_native_filters(
     return tags, parameters
 
 
+# Dashcard fields a dashboard PUT must send back, or Metabase clears them
+_DASHCARD_KEPT_FIELDS = (
+    "id", "card_id", "row", "col", "size_x", "size_y",
+    "parameter_mappings", "visualization_settings", "series", "dashboard_tab_id",
+)
+
+
+def build_dashcards(
+    existing_dashcards: list[dict[str, Any]],
+    card_id: int,
+    col: int,
+    row: int,
+    size_x: int,
+    size_y: int,
+    parameter_mappings: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """
+    Build the full dashcard list for a dashboard PUT: the existing cards unchanged
+    (including their filter mappings and settings) plus one new card (id -1).
+    """
+    dashcards = [
+        {field: dc[field] for field in _DASHCARD_KEPT_FIELDS if field in dc}
+        for dc in existing_dashcards
+    ]
+    dashcards.append({
+        "id": -1,
+        "card_id": card_id,
+        "row": row,
+        "col": col,
+        "size_x": size_x,
+        "size_y": size_y,
+        "parameter_mappings": [{**m, "card_id": card_id} for m in parameter_mappings or []],
+    })
+    return dashcards
+
+
 # =============================================================================
 # Tool Definitions - Database Operations
 # =============================================================================
@@ -742,6 +778,7 @@ async def add_card_to_dashboard(
     row: int = 0,
     size_x: int = 6,
     size_y: int = 4,
+    parameter_mappings: list[dict[str, Any]] | str | None = None,
 ) -> dict[str, Any]:
     """
     Add an existing card to a dashboard at a specified position and size.
@@ -753,39 +790,28 @@ async def add_card_to_dashboard(
         row: Row position on the dashboard grid (default: 0).
         size_x: Width of the card in grid units (default: 6).
         size_y: Height of the card in grid units (default: 4).
+        parameter_mappings: Optional links from dashboard filters to the card, e.g.
+            [{"parameter_id": "<dashboard filter id>",
+              "target": ["dimension", ["template-tag", "participant_id"]]}]
+            (use "variable" instead of "dimension" for a text/number/date variable).
 
     Returns:
-        The created dashboard card object.
+        The updated dashboard object.
     """
     try:
         await ctx.info(f"Adding card {card_id} to dashboard {dashboard_id}")
+
+        if isinstance(parameter_mappings, str):
+            # Some MCP clients send object arguments JSON-encoded
+            parameter_mappings = json.loads(parameter_mappings)
 
         # Fetch existing dashboard to get current dashcards
         dashboard = await metabase_client.request("GET", f"/dashboard/{dashboard_id}")
         existing_dashcards = dashboard.get("dashcards", dashboard.get("ordered_cards", []))
 
-        # Preserve existing dashcards with their current layout
-        dashcards = [
-            {
-                "id": dc["id"],
-                "card_id": dc.get("card_id"),
-                "row": dc.get("row"),
-                "col": dc.get("col"),
-                "size_x": dc.get("size_x"),
-                "size_y": dc.get("size_y"),
-            }
-            for dc in existing_dashcards
-        ]
-
-        # Append new card with id: -1 to indicate a new entry
-        dashcards.append({
-            "id": -1,
-            "card_id": card_id,
-            "row": row,
-            "col": col,
-            "size_x": size_x,
-            "size_y": size_y,
-        })
+        dashcards = build_dashcards(
+            existing_dashcards, card_id, col, row, size_x, size_y, parameter_mappings
+        )
 
         result = await metabase_client.request(
             "PUT", f"/dashboard/{dashboard_id}", json={"dashcards": dashcards}
