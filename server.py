@@ -31,6 +31,7 @@ METABASE_URL = os.getenv("METABASE_URL")
 METABASE_USER_EMAIL = os.getenv("METABASE_USER_EMAIL")
 METABASE_PASSWORD = os.getenv("METABASE_PASSWORD")
 METABASE_API_KEY = os.getenv("METABASE_API_KEY")
+METABASE_SESSION_TOKEN = os.getenv("METABASE_SESSION_TOKEN")
 METABASE_HTTP_TIMEOUT = os.getenv("METABASE_HTTP_TIMEOUT", "30.0")
 
 try:
@@ -42,10 +43,12 @@ if METABASE_HTTP_TIMEOUT_SECONDS <= 0:
     raise ValueError("METABASE_HTTP_TIMEOUT must be greater than 0")
 
 if not METABASE_URL or (
-    not METABASE_API_KEY and (not METABASE_USER_EMAIL or not METABASE_PASSWORD)
+    not METABASE_API_KEY
+    and not METABASE_SESSION_TOKEN
+    and (not METABASE_USER_EMAIL or not METABASE_PASSWORD)
 ):
     raise ValueError(
-        "METABASE_URL is required, and either METABASE_API_KEY or both METABASE_USER_EMAIL and METABASE_PASSWORD must be provided"
+        "METABASE_URL is required, and one of METABASE_API_KEY, METABASE_SESSION_TOKEN, or both METABASE_USER_EMAIL and METABASE_PASSWORD must be provided"
     )
 
 
@@ -71,7 +74,8 @@ class MetabaseClient:
 
     def __init__(self):
         self.base_url = METABASE_URL.rstrip("/")
-        self.session_token: str | None = None
+        # A pre-issued session token (e.g. copied from an SSO browser login) skips /api/session
+        self.session_token: str | None = METABASE_SESSION_TOKEN
         self.api_key: str | None = METABASE_API_KEY
         self.auth_method = AuthMethod.API_KEY if METABASE_API_KEY else AuthMethod.SESSION
         self.client = httpx.AsyncClient(timeout=METABASE_HTTP_TIMEOUT_SECONDS)
