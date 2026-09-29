@@ -9,6 +9,7 @@ execute queries, manage cards, and work with collections.
 import logging
 import os
 import sys
+import uuid
 from enum import Enum
 from typing import Any
 
@@ -144,6 +145,50 @@ class MetabaseClient:
 
 # Global client instance
 metabase_client = MetabaseClient()
+
+
+# Parameter widget type Metabase uses for each simple template-tag type
+_TAG_PARAMETER_TYPES = {"text": "category", "number": "number/=", "date": "date/single"}
+
+
+def build_native_filters(
+    template_tags: dict[str, dict[str, Any]],
+) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]]]:
+    """
+    Complete native-query template tags ({{name}} variables) and build the matching card
+    parameters, which Metabase needs to show a filter widget on the saved question.
+
+    Fills in each tag's name, id, and display-name if missing. Field filters
+    (type "dimension") use their "widget-type" as the parameter type.
+    """
+    tags: dict[str, dict[str, Any]] = {}
+    parameters: list[dict[str, Any]] = []
+
+    for name, spec in template_tags.items():
+        tag = {
+            "name": name,
+            "display-name": name.replace("_", " ").title(),
+            **spec,
+        }
+        tag.setdefault("id", str(uuid.uuid4()))
+        tags[name] = tag
+
+        is_field_filter = tag.get("type") == "dimension"
+        parameter: dict[str, Any] = {
+            "id": tag["id"],
+            "type": tag.get("widget-type", "category")
+            if is_field_filter
+            else _TAG_PARAMETER_TYPES.get(tag.get("type", "text"), "category"),
+            "target": ["dimension" if is_field_filter else "variable", ["template-tag", name]],
+            "name": tag["display-name"],
+            "slug": name,
+            "required": bool(tag.get("required", False)),
+        }
+        if tag.get("default") is not None:
+            parameter["default"] = tag["default"]
+        parameters.append(parameter)
+
+    return tags, parameters
 
 
 # =============================================================================
@@ -455,6 +500,7 @@ async def create_card(
     description: str | None = None,
     collection_id: int | None = None,
     visualization_settings: dict[str, Any] | None = None,
+    template_tags: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """
     Create a new question/card in Metabase.
@@ -466,6 +512,11 @@ async def create_card(
         description: Optional description.
         collection_id: Optional collection to place the card in.
         visualization_settings: Optional visualization configuration.
+        template_tags: Optional filters for {{variables}} in the query, keyed by variable name,
+            e.g. {"participant_id": {"type": "text", "display-name": "Participant ID",
+            "required": true, "default": "SS_1"}}. Types: text, number, date, or dimension
+            (a field filter: add "dimension": ["field", <field_id>, null] and "widget-type",
+            e.g. "string/="). Each one becomes a filter widget on the question.
 
     Returns:
         The created card object.
@@ -473,16 +524,22 @@ async def create_card(
     try:
         await ctx.info(f"Creating new card '{name}' in database {database_id}")
 
+        native: dict[str, Any] = {"query": query}
+        parameters: list[dict[str, Any]] = []
+        if template_tags:
+            native["template-tags"], parameters = build_native_filters(template_tags)
+
         payload = {
             "name": name,
             "database_id": database_id,
             "dataset_query": {
                 "database": database_id,
                 "type": "native",
-                "native": {"query": query},
+                "native": native,
             },
             "display": "table",
             "visualization_settings": visualization_settings or {},
+            "parameters": parameters,
         }
 
         if description:
