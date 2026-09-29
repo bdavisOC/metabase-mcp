@@ -6,6 +6,7 @@ A FastMCP server that provides tools to interact with Metabase databases,
 execute queries, manage cards, and work with collections.
 """
 
+import json
 import logging
 import os
 import sys
@@ -500,7 +501,7 @@ async def create_card(
     description: str | None = None,
     collection_id: int | None = None,
     visualization_settings: dict[str, Any] | None = None,
-    template_tags: dict[str, dict[str, Any]] | None = None,
+    template_tags: dict[str, dict[str, Any]] | str | None = None,
 ) -> dict[str, Any]:
     """
     Create a new question/card in Metabase.
@@ -526,6 +527,9 @@ async def create_card(
 
         native: dict[str, Any] = {"query": query}
         parameters: list[dict[str, Any]] = []
+        if isinstance(template_tags, str):
+            # Some MCP clients send object arguments JSON-encoded
+            template_tags = json.loads(template_tags)
         if template_tags:
             native["template-tags"], parameters = build_native_filters(template_tags)
 
